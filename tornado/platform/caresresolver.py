@@ -68,7 +68,7 @@ class CaresResolver(Resolver):
         else:
             # gethostbyname doesn't take callback as a kwarg
             fut = Future()  # type: Future[Tuple[Any, Any]]
-            self.channel.gethostbyname(
+            self.channel.getaddrinfo(
                 host, family, lambda result, error: fut.set_result((result, error))
             )
             result, error = yield fut

@@ -37,15 +37,10 @@ skipIfNoTwisted = unittest.skipUnless(have_twisted, "twisted module not present"
 class ConvertDeferredTest(AsyncTestCase):
     @gen_test
     def test_success(self):
-        @inlineCallbacks
-        def fn():
-            if False:
-                # inlineCallbacks doesn't work with regular functions;
-                # must have a yield even if it's unreachable.
-                yield
-            returnValue(42)
+        async def fn():
+            return 42
 
-        res = yield fn()
+        res = await fn()
         self.assertEqual(res, 42)
 
     @gen_test

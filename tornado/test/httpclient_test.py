@@ -606,7 +606,7 @@ X-XSS-Protection: 1;
         with self.assertRaises((ValueError, HTTPError)) as context:  # type: ignore
             request = HTTPRequest(url, network_interface="not-interface-or-ip")
             yield self.http_client.fetch(request)
-        self.assertIn("not-interface-or-ip", str(context.exception))
+        self.assertIn("Failed binding local connection end", str(context.exception))
 
     def test_all_methods(self):
         for method in ["GET", "DELETE", "OPTIONS"]:

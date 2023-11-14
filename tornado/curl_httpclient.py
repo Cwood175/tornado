@@ -480,12 +480,13 @@ class CurlAsyncHTTPClient(AsyncHTTPClient):
                 raise ValueError("Body must be None for GET request")
             request_buffer = BytesIO(utf8(request.body or ""))
 
-            def ioctl(cmd: int) -> None:
+            def ioctl(cmd: int, data: int) -> int:
                 if cmd == curl.IOCMD_RESTARTREAD:  # type: ignore
                     request_buffer.seek(0)
+                return 0
 
             curl.setopt(pycurl.READFUNCTION, request_buffer.read)
-            curl.setopt(pycurl.IOCTLFUNCTION, ioctl)
+            curl.setopt(pycurl.SEEKFUNCTION, ioctl)
             if request.method == "POST":
                 curl.setopt(pycurl.POSTFIELDSIZE, len(request.body or ""))
             else:

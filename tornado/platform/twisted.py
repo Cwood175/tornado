@@ -140,9 +140,7 @@ if hasattr(gen.convert_yielded, "register"):
 
         def errback(failure: failure.Failure) -> None:
             try:
-                failure.raiseException()
-                # Should never happen, but just in case
-                raise Exception("errback called without error")
+                raise RuntimeError(failure.value)
             except:
                 future_set_exc_info(f, sys.exc_info())
 
