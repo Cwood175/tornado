@@ -606,7 +606,17 @@ X-XSS-Protection: 1;
         with self.assertRaises((ValueError, HTTPError)) as context:  # type: ignore
             request = HTTPRequest(url, network_interface="not-interface-or-ip")
             yield self.http_client.fetch(request)
-        self.assertIn("not-interface-or-ip", str(context.exception))
+        if isinstance(context.exception, ValueError):
+            self.assertIn("not-interface-or-ip", str(context.exception))
+        else:
+            # libcurl may report a generic bind failure that omits the
+            # interface name (e.g. libcurl 8.5.0).
+            message = str(context.exception)
+            self.assertTrue(
+                "not-interface-or-ip" in message
+                or "Failed binding local connection end" in message,
+                message,
+            )
 
     def test_all_methods(self):
         for method in ["GET", "DELETE", "OPTIONS"]:

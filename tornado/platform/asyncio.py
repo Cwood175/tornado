@@ -381,12 +381,20 @@ def to_asyncio_future(tornado_future: asyncio.Future) -> asyncio.Future:
     return convert_yielded(tornado_future)
 
 
-if sys.platform == "win32" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
-    # "Any thread" and "selector" should be orthogonal, but there's not a clean
-    # interface for composing policies so pick the right base.
-    _BasePolicy = asyncio.WindowsSelectorEventLoopPolicy  # type: ignore
-else:
-    _BasePolicy = asyncio.DefaultEventLoopPolicy
+import warnings as _warnings
+
+with _warnings.catch_warnings():
+    # Python 3.14 deprecates the event loop policy classes, and accessing
+    # them through the asyncio module emits a DeprecationWarning.
+    _warnings.simplefilter("ignore", DeprecationWarning)
+    if sys.platform == "win32" and hasattr(
+        asyncio, "WindowsSelectorEventLoopPolicy"
+    ):
+        # "Any thread" and "selector" should be orthogonal, but there's not a clean
+        # interface for composing policies so pick the right base.
+        _BasePolicy = asyncio.WindowsSelectorEventLoopPolicy  # type: ignore
+    else:
+        _BasePolicy = asyncio.DefaultEventLoopPolicy
 
 
 class AnyThreadEventLoopPolicy(_BasePolicy):  # type: ignore
