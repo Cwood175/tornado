@@ -1,15 +1,15 @@
-import pycares  # type: ignore
 import socket
+import typing
 
-from tornado.concurrent import Future
+import pycares  # type: ignore
+
 from tornado import gen
+from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
 from tornado.netutil import Resolver, is_valid_ip
 
-import typing
-
 if typing.TYPE_CHECKING:
-    from typing import Generator, Any, List, Tuple, Dict  # noqa: F401
+    from typing import Any, Dict, Generator, List, Tuple  # noqa: F401
 
 
 class CaresResolver(Resolver):
@@ -68,16 +68,71 @@ class CaresResolver(Resolver):
         else:
             # gethostbyname doesn't take callback as a kwarg
             fut = Future()  # type: Future[Tuple[Any, Any]]
-            self.channel.gethostbyname(
-                host, family, lambda result, error: fut.set_result((result, error))
-            )
-            result, error = yield fut
-            if error:
-                raise OSError(
-                    "C-Ares returned error %s: %s while resolving %s"
-                    % (error, pycares.errno.strerror(error), host)
+            # Prefer gethostbyname if available, fall back to getaddrinfo or socket.getaddrinfo
+            if hasattr(self.channel, "gethostbyname"):
+                self.channel.gethostbyname(
+                    host, family, lambda result, error: fut.set_result((result, error))
                 )
-            addresses = result.addresses
+                result, error = yield fut
+                if error:
+                    raise OSError(
+                        "C-Ares returned error %s: %s while resolving %s"
+                        % (error, pycares.errno.strerror(error), host)
+                    )
+                addresses = result.addresses
+            elif hasattr(self.channel, "getaddrinfo"):
+                # Use getaddrinfo if gethostbyname is not available
+                self.channel.getaddrinfo(
+                    host,
+                    None,
+                    family,
+                    0,
+                    0,
+                    0,
+                    lambda result, error: fut.set_result((result, error)),
+                )
+                result, error = yield fut
+                if error:
+                    raise OSError(
+                        "C-Ares returned error %s: %s while resolving %s"
+                        % (error, pycares.errno.strerror(error), host)
+                    )
+                addresses = []
+                for item in result:
+                    if isinstance(item, dict):
+                        addr = (
+                            item.get("address")
+                            or item.get("addr")
+                            or item.get("host")
+                            or item.get("name")
+                        )
+                        if addr:
+                            addresses.append(addr)
+                    elif isinstance(item, (tuple, list)):
+                        # Try common tuple/list shapes
+                        # e.g. (family, address, ... ) or sockaddr tuples
+                        if len(item) >= 2 and isinstance(item[1], str):
+                            addresses.append(item[1])
+                        elif len(item) >= 1 and isinstance(item[0], str):
+                            addresses.append(item[0])
+                if not addresses:
+                    raise OSError(
+                        "C-Ares returned no addresses while resolving %s" % (host,)
+                    )
+            else:
+                # Fallback to synchronous resolution if pycares Channel lacks expected methods
+                try:
+                    infos = socket.getaddrinfo(host, None, family, 0, 0)
+                except socket.gaierror as e:
+                    raise OSError(
+                        "getaddrinfo failed: %s while resolving %s" % (e, host)
+                    )
+                addresses = []
+                for info in infos:
+                    # info: (family, socktype, proto, canonname, sockaddr)
+                    sockaddr = info[4]
+                    addr = sockaddr[0] if isinstance(sockaddr, tuple) else sockaddr
+                    addresses.append(addr)
         addrinfo = []
         for address in addresses:
             if "." in address:
