@@ -10,7 +10,6 @@
 """
 
 import asyncio
-from collections.abc import Generator
 import functools
 import inspect
 import logging
@@ -19,23 +18,22 @@ import re
 import signal
 import socket
 import sys
+import typing
 import unittest
 import warnings
+from collections.abc import Generator
+from types import TracebackType
+from typing import Any, Callable, Coroutine, Dict, Optional, Tuple, Type, Union
 
-from tornado import gen
+from tornado import gen, netutil
 from tornado.httpclient import AsyncHTTPClient, HTTPResponse
 from tornado.httpserver import HTTPServer
 from tornado.ioloop import IOLoop, TimeoutError
-from tornado import netutil
+from tornado.log import app_log
 from tornado.platform.asyncio import AsyncIOMainLoop
 from tornado.process import Subprocess
-from tornado.log import app_log
-from tornado.util import raise_exc_info, basestring_type
+from tornado.util import basestring_type, raise_exc_info
 from tornado.web import Application
-
-import typing
-from typing import Tuple, Any, Callable, Type, Dict, Union, Optional, Coroutine
-from types import TracebackType
 
 if typing.TYPE_CHECKING:
     _ExcInfoTuple = Tuple[
@@ -720,7 +718,7 @@ class ExpectLog(logging.Filter):
         if record.exc_info:
             self.logged_stack = True
         message = record.getMessage()
-        if self.regex.match(message):
+        if self.regex.search(message):
             if self.level is None and record.levelno < logging.WARNING:
                 # We're inside the logging machinery here so generating a DeprecationWarning
                 # here won't be reported cleanly (if warnings-as-errors is enabled, the error

@@ -33,9 +33,6 @@ import sys
 import threading
 import typing
 import warnings
-from tornado.gen import convert_yielded
-from tornado.ioloop import IOLoop, _Selectable
-
 from typing import (
     Any,
     Callable,
@@ -48,6 +45,9 @@ from typing import (
     TypeVar,
     Union,
 )
+
+from tornado.gen import convert_yielded
+from tornado.ioloop import IOLoop, _Selectable
 
 
 class _HasFileno(Protocol):
@@ -457,6 +457,7 @@ class SelectorThread:
         ] = None
         self._closing_selector = False
         self._thread: Optional[threading.Thread] = None
+        # create the async-generator handle
         self._thread_manager_handle = self._thread_manager()
 
         async def thread_manager_anext() -> None:
@@ -466,21 +467,81 @@ class SelectorThread:
 
         # When the loop starts, start the thread. Not too soon because we can't
         # clean up if we get to this point but the event loop is closed without
-        # starting.
-        self._real_loop.call_soon(
-            lambda: self._real_loop.create_task(thread_manager_anext())
-        )
+        # starting. Schedule creation of the task in a way that avoids creating
+        # an orphaned coroutine if task creation fails, and attempts to close
+        # the async-generator handle if scheduling/creation isn't possible.
+        def _schedule_thread_manager() -> None:
+            coro = None
+            try:
+                coro = thread_manager_anext()
+                self._real_loop.create_task(coro)
+            except Exception:
+                # If create_task raised we must avoid leaking the coroutine
+                # object and try to clean up the async-generator handle.
+                if coro is not None:
+                    try:
+                        coro.close()
+                    except Exception:
+                        pass
+                # Try to close the async-generator handle by scheduling its
+                # aclose on the loop. If that fails, close the aclose coro
+                # object to avoid "was never awaited" warnings.
+                try:
+                    aclose_coro = self._thread_manager_handle.aclose()
+                    try:
+                        self._real_loop.create_task(aclose_coro)
+                    except Exception:
+                        try:
+                            aclose_coro.close()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                raise
+
+        self._real_loop.call_soon(_schedule_thread_manager)
 
         self._readers: Dict[_FileDescriptorLike, Callable] = {}
         self._writers: Dict[_FileDescriptorLike, Callable] = {}
 
         # Writing to _waker_w will wake up the selector thread, which
         # watches for _waker_r to be readable.
-        self._waker_r, self._waker_w = socket.socketpair()
-        self._waker_r.setblocking(False)
-        self._waker_w.setblocking(False)
-        _selector_loops.add(self)
-        self.add_reader(self._waker_r, self._consume_waker)
+        # Create and register the socketpair in a guarded block so that if any
+        # subsequent initialization fails we close the sockets and attempt to
+        # clean up the async-generator handle to avoid resource/coroutine leaks.
+        try:
+            self._waker_r, self._waker_w = socket.socketpair()
+            self._waker_r.setblocking(False)
+            self._waker_w.setblocking(False)
+            _selector_loops.add(self)
+            self.add_reader(self._waker_r, self._consume_waker)
+        except Exception:
+            # Clean up sockets if they were created
+            if hasattr(self, "_waker_r"):
+                try:
+                    self._waker_r.close()
+                except Exception:
+                    pass
+            if hasattr(self, "_waker_w"):
+                try:
+                    self._waker_w.close()
+                except Exception:
+                    pass
+            # Attempt to close the async-generator handle gracefully. First
+            # try to schedule its aclose on the loop; if not possible, close
+            # the aclose coroutine object to avoid warnings.
+            try:
+                aclose_coro = self._thread_manager_handle.aclose()
+                try:
+                    self._real_loop.create_task(aclose_coro)
+                except Exception:
+                    try:
+                        aclose_coro.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            raise
 
     def close(self) -> None:
         if self._closed:
@@ -627,7 +688,26 @@ class SelectorThread:
             callback = cb_map[fd]
         except KeyError:
             return
-        callback()
+        try:
+            result = callback()
+        except Exception:
+            # Let exceptions propagate (or be handled elsewhere). Do not
+            # create coroutine warnings by swallowing them here.
+            raise
+        # If the callback returned a coroutine, schedule it on the real loop
+        # thread to avoid "was never awaited" warnings.
+        if asyncio.iscoroutine(result):
+            try:
+                self._real_loop.call_soon_threadsafe(
+                    self._real_loop.create_task, result
+                )
+            except Exception:
+                # If scheduling fails (for example loop closed), close the
+                # coroutine object to avoid "was never awaited" warnings.
+                try:
+                    result.close()
+                except Exception:
+                    pass
 
     def add_reader(
         self, fd: _FileDescriptorLike, callback: Callable[..., None], *args: Any
