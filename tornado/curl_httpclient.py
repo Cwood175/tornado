@@ -18,26 +18,25 @@
 import collections
 import functools
 import logging
-import pycurl
 import threading
 import time
+import typing
+from collections.abc import Callable
 from io import BytesIO
+from typing import Any
 
-from tornado import httputil
-from tornado import ioloop
+import pycurl
 
-from tornado.escape import utf8, native_str
+from tornado import httputil, ioloop
+from tornado.escape import native_str, utf8
 from tornado.httpclient import (
+    AsyncHTTPClient,
+    HTTPError,
     HTTPRequest,
     HTTPResponse,
-    HTTPError,
-    AsyncHTTPClient,
     main,
 )
 from tornado.log import app_log
-
-from typing import Dict, Any, Callable, Union, Optional
-import typing
 
 if typing.TYPE_CHECKING:
     from typing import Deque, Tuple  # noqa: F401
@@ -47,7 +46,7 @@ curl_log = logging.getLogger("tornado.curl_httpclient")
 
 class CurlAsyncHTTPClient(AsyncHTTPClient):
     def initialize(  # type: ignore
-        self, max_clients: int = 10, defaults: Optional[Dict[str, Any]] = None
+        self, max_clients: int = 10, defaults: dict[str, Any] | None = None
     ) -> None:
         super().initialize(defaults=defaults)
         # Typeshed is incomplete for CurlMulti, so just use Any for now.
@@ -56,9 +55,7 @@ class CurlAsyncHTTPClient(AsyncHTTPClient):
         self._multi.setopt(pycurl.M_SOCKETFUNCTION, self._handle_socket)
         self._curls = [self._curl_create() for i in range(max_clients)]
         self._free_list = self._curls[:]
-        self._requests = (
-            collections.deque()
-        )  # type: Deque[Tuple[HTTPRequest, Callable[[HTTPResponse], None], float]]
+        self._requests = collections.deque()  # type: Deque[Tuple[HTTPRequest, Callable[[HTTPResponse], None], float]]
         self._fds = {}  # type: Dict[int, int]
         self._timeout = None  # type: Optional[object]
 
@@ -257,8 +254,8 @@ class CurlAsyncHTTPClient(AsyncHTTPClient):
     def _finish(
         self,
         curl: pycurl.Curl,
-        curl_error: Optional[int] = None,
-        curl_message: Optional[str] = None,
+        curl_error: int | None = None,
+        curl_message: str | None = None,
     ) -> None:
         info = curl.info  # type: ignore
         curl.info = None  # type: ignore
@@ -364,7 +361,7 @@ class CurlAsyncHTTPClient(AsyncHTTPClient):
         )
         if request.streaming_callback:
 
-            def write_function(b: Union[bytes, bytearray]) -> int:
+            def write_function(b: bytes | bytearray) -> int:
                 assert request.streaming_callback is not None
                 self.io_loop.add_callback(request.streaming_callback, b)
                 return len(b)
@@ -480,12 +477,12 @@ class CurlAsyncHTTPClient(AsyncHTTPClient):
                 raise ValueError("Body must be None for GET request")
             request_buffer = BytesIO(utf8(request.body or ""))
 
-            def ioctl(cmd: int) -> None:
-                if cmd == curl.IOCMD_RESTARTREAD:  # type: ignore
-                    request_buffer.seek(0)
+            def seek(offset: int, origin: int) -> int:
+                request_buffer.seek(offset, origin)
+                return 0
 
             curl.setopt(pycurl.READFUNCTION, request_buffer.read)
-            curl.setopt(pycurl.IOCTLFUNCTION, ioctl)
+            curl.setopt(pycurl.SEEKFUNCTION, seek)
             if request.method == "POST":
                 curl.setopt(pycurl.POSTFIELDSIZE, len(request.body or ""))
             else:
