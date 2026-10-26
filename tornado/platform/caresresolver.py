@@ -1,15 +1,16 @@
-import pycares  # type: ignore
 import socket
+import typing
 
-from tornado.concurrent import Future
+import pycares  # type: ignore
+
 from tornado import gen
+from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
 from tornado.netutil import Resolver, is_valid_ip
 
-import typing
-
 if typing.TYPE_CHECKING:
-    from typing import Generator, Any, List, Tuple, Dict  # noqa: F401
+    from collections.abc import Generator
+    from typing import Any
 
 
 class CaresResolver(Resolver):
@@ -62,14 +63,18 @@ class CaresResolver(Resolver):
     @gen.coroutine
     def resolve(
         self, host: str, port: int, family: int = 0
-    ) -> "Generator[Any, Any, List[Tuple[int, Any]]]":
+    ) -> "Generator[Any, Any, list[tuple[int, Any]]]":
         if is_valid_ip(host):
             addresses = [host]
         else:
-            # gethostbyname doesn't take callback as a kwarg
+            # getaddrinfo doesn't take callback as a kwarg
             fut = Future()  # type: Future[Tuple[Any, Any]]
-            self.channel.gethostbyname(
-                host, family, lambda result, error: fut.set_result((result, error))
+            self.channel.getaddrinfo(
+                host,
+                port,
+                family,
+                socket.SOCK_STREAM,
+                lambda result, error: fut.set_result((result, error)),
             )
             result, error = yield fut
             if error:
@@ -77,7 +82,7 @@ class CaresResolver(Resolver):
                     "C-Ares returned error %s: %s while resolving %s"
                     % (error, pycares.errno.strerror(error), host)
                 )
-            addresses = result.addresses
+            addresses = [x[4][0] for x in result]
         addrinfo = []
         for address in addresses:
             if "." in address:

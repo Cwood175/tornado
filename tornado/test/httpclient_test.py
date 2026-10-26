@@ -1,36 +1,35 @@
 import base64
 import binascii
-from contextlib import closing
 import copy
-import gzip
-import threading
 import datetime
-from io import BytesIO
+import gzip
 import subprocess
 import sys
+import threading
 import time
 import typing  # noqa: F401
 import unicodedata
 import unittest
+from contextlib import closing
+from io import BytesIO
 
-from tornado.escape import utf8, native_str, to_unicode
-from tornado import gen
+from tornado import gen, netutil
+from tornado.escape import native_str, to_unicode, utf8
 from tornado.httpclient import (
+    HTTPClient,
+    HTTPError,
     HTTPRequest,
     HTTPResponse,
     _RequestProxy,
-    HTTPError,
-    HTTPClient,
 )
 from tornado.httpserver import HTTPServer
+from tornado.httputil import HTTPHeaders, format_timestamp
 from tornado.ioloop import IOLoop
 from tornado.iostream import IOStream
-from tornado.log import gen_log, app_log
-from tornado import netutil
-from tornado.testing import AsyncHTTPTestCase, bind_unused_port, gen_test, ExpectLog
+from tornado.log import app_log, gen_log
 from tornado.test.util import ignore_deprecation
+from tornado.testing import AsyncHTTPTestCase, ExpectLog, bind_unused_port, gen_test
 from tornado.web import Application, RequestHandler, url
-from tornado.httputil import format_timestamp, HTTPHeaders
 
 
 class HelloWorldHandler(RequestHandler):
@@ -249,9 +248,7 @@ Transfer-Encoding: chunked
 2
 0
 
-""".replace(
-                        b"\n", b"\r\n"
-                    )
+""".replace(b"\n", b"\r\n")
                 )
                 stream.close()
 
@@ -545,9 +542,7 @@ HTTP/1.1 200 OK
 X-XSS-Protection: 1;
 \tmode=block
 
-""".replace(
-                        b"\n", b"\r\n"
-                    )
+""".replace(b"\n", b"\r\n")
                 )
                 stream.close()
 
@@ -622,7 +617,7 @@ X-XSS-Protection: 1;
         with self.assertRaises((ValueError, HTTPError)) as context:  # type: ignore
             request = HTTPRequest(url, network_interface="not-interface-or-ip")
             yield self.http_client.fetch(request)
-        self.assertIn("not-interface-or-ip", str(context.exception))
+        self.assertIn("Failed to connect", str(context.exception))
 
     def test_all_methods(self):
         for method in ["GET", "DELETE", "OPTIONS"]:
@@ -921,7 +916,7 @@ class HTTPRequestTestCase(unittest.TestCase):
         self.assertEqual(request.body, utf8("foo"))
 
     def test_if_modified_since(self):
-        http_date = datetime.datetime.now(datetime.timezone.utc)
+        http_date = datetime.datetime.now(datetime.UTC)
         request = HTTPRequest("http://example.com", if_modified_since=http_date)
         self.assertEqual(
             request.headers, {"If-Modified-Since": format_timestamp(http_date)}
